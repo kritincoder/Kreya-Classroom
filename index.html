@@ -1333,7 +1333,7 @@ function joinScheduledClass(classId,role){
   const st=classState(cl);
   if(st.state==='upcoming'){toast('This class is not open yet — it unlocks 10 minutes before the start time');return;}
   if(st.state==='past'){toast('This class has already ended');return;}
-  S.currentClass=cl;S.role=role;S.name=CU.name;S.meetingId=cl.meetingCode;S.isHost=(role==='teacher');
+  S.currentClass=cl;S.role=role;S.name=CU.name;S.meetingId=cl.meetingCode;S.isHost=false;
   goToPrejoin();
 }
 
@@ -1342,8 +1342,8 @@ async function goToPrejoin(){
   const cl=S.currentClass;
   $('pj-class-title').textContent=cl.title;
   $('pj-class-sub').textContent=`${cl.date} · ${fmtTime(cl.time)} · ${cl.duration} min`;
-  $('host-badge').style.display=(S.isHost||S.role==='admin')?'block':'none';
-  $('host-badge').textContent=S.isHost?"You're teaching this class":'Joining with admin oversight — you\'ll be admitted automatically';
+  $('host-badge').style.display=(S.role==='teacher'||S.role==='admin')?'block':'none';
+  $('host-badge').textContent=S.role==='teacher'?"You're teaching this class — you'll have full control.":'Joining with admin oversight — you\'ll be admitted automatically.';
   const st=classState(cl);
   const gate=$('gate-badge');
   if(st.state==='live'){
