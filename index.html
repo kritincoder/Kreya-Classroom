@@ -372,6 +372,9 @@ label{display:block;font-size:11.5px;font-weight:600;color:var(--text2);margin-b
 </head>
 <body>
 <div class="toast" id="toast"></div>
+<!-- Always-on emergency exit. Lives outside every screen, so no matter what
+     breaks inside the meeting room, there is always a way back. -->
+<button onclick="try{stopAll();}catch(e){}try{route();}catch(e){location.reload();}" title="If the screen ever freezes, click this to escape" style="position:fixed;bottom:10px;right:10px;z-index:99999;background:#DC2626;color:#fff;border:none;border-radius:20px;padding:8px 14px;font-size:11px;font-weight:700;font-family:Inter,sans-serif;cursor:pointer;opacity:0.85;">Exit to dashboard</button>
 <div class="admit-bar" id="admit-bar">
   <div class="admit-av" id="admit-av">?</div>
   <div class="admit-inf"><div class="admit-name" id="admit-name">Someone</div><div class="admit-sub">wants to join the class</div></div>
@@ -768,15 +771,17 @@ function icS(name){return `<span class="ic-sm">${ICONS[name]||''}</span>`;}
 // don't leave the person stuck on a broken/blank screen. Show a toast and
 // bounce back to their dashboard automatically.
 // ════════════════════════════════════════════
-window.addEventListener('error',function(e){
-  console.error('Unhandled error',e.error||e.message);
+function recoverFromCrash(reason){
+  console.error('Recovering from crash:',reason);
   try{
     const t=document.getElementById('toast');
     if(t){t.textContent='Something went wrong — returning you to your dashboard';t.classList.add('show');setTimeout(()=>t.classList.remove('show'),4000);}
   }catch(_e){}
   try{ if(typeof stopAll==='function') stopAll(); }catch(_e){}
   try{ if(typeof route==='function') setTimeout(route,600); }catch(_e){}
-});
+}
+window.addEventListener('error',function(e){recoverFromCrash(e.error||e.message);});
+window.addEventListener('unhandledrejection',function(e){recoverFromCrash(e.reason);});
 
 // ════════════════════════════════════════════
 // CANVAS POLYFILL
@@ -1333,7 +1338,7 @@ function joinScheduledClass(classId,role){
   const st=classState(cl);
   if(st.state==='upcoming'){toast('This class is not open yet — it unlocks 10 minutes before the start time');return;}
   if(st.state==='past'){toast('This class has already ended');return;}
-  S.currentClass=cl;S.role=role;S.name=CU.name;S.meetingId=cl.meetingCode;S.isHost=false;
+  S.currentClass=cl;S.role=role;S.name=CU.name;S.meetingId=cl.meetingCode;S.isHost=(role==='teacher');
   goToPrejoin();
 }
 
@@ -1342,8 +1347,8 @@ async function goToPrejoin(){
   const cl=S.currentClass;
   $('pj-class-title').textContent=cl.title;
   $('pj-class-sub').textContent=`${cl.date} · ${fmtTime(cl.time)} · ${cl.duration} min`;
-  $('host-badge').style.display=(S.role==='teacher'||S.role==='admin')?'block':'none';
-  $('host-badge').textContent=S.role==='teacher'?"You're teaching this class — you'll have full control.":'Joining with admin oversight — you\'ll be admitted automatically.';
+  $('host-badge').style.display=(S.isHost||S.role==='admin')?'block':'none';
+  $('host-badge').textContent=S.isHost?"You're teaching this class":'Joining with admin oversight — you\'ll be admitted automatically';
   const st=classState(cl);
   const gate=$('gate-badge');
   if(st.state==='live'){
