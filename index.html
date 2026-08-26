@@ -372,9 +372,11 @@ label{display:block;font-size:11.5px;font-weight:600;color:var(--text2);margin-b
 </head>
 <body>
 <div class="toast" id="toast"></div>
-<!-- Always-on emergency exit. Lives outside every screen, so no matter what
-     breaks inside the meeting room, there is always a way back. -->
-<button onclick="try{stopAll();}catch(e){}try{route();}catch(e){location.reload();}" title="If the screen ever freezes, click this to escape" style="position:fixed;bottom:10px;right:10px;z-index:99999;background:#DC2626;color:#fff;border:none;border-radius:20px;padding:8px 14px;font-size:11px;font-weight:700;font-family:Inter,sans-serif;cursor:pointer;opacity:0.85;">Exit to dashboard</button>
+<!-- Always-on emergency exit. A raw, dependency-free page reload — it does
+     NOT call into any app function, so it cannot fail the way the app's own
+     code can. Placed at the TOP of the viewport (not bottom) so mobile
+     browser toolbars can't cover it. -->
+<button onclick="location.reload()" title="Tap to escape a frozen screen" style="position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#DC2626;color:#fff;border:2px solid #fff;border-radius:20px;padding:10px 20px;font-size:13px;font-weight:700;font-family:Inter,-apple-system,sans-serif;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.4);">⟲ Reload / Exit</button>
 <div class="admit-bar" id="admit-bar">
   <div class="admit-av" id="admit-av">?</div>
   <div class="admit-inf"><div class="admit-name" id="admit-name">Someone</div><div class="admit-sub">wants to join the class</div></div>
@@ -771,6 +773,38 @@ function icS(name){return `<span class="ic-sm">${ICONS[name]||''}</span>`;}
 // don't leave the person stuck on a broken/blank screen. Show a toast and
 // bounce back to their dashboard automatically.
 // ════════════════════════════════════════════
+// ════════════════════════════════════════════
+// SECURE-CONTEXT CHECK — camera/mic (and WebRTC signaling) only work when
+// this page is served over https://, or as http://localhost on the SAME
+// machine. Opened as a plain double-clicked file (file://) or over plain
+// http:// from another device's IP, the browser silently blocks camera/mic
+// — sometimes erroring, sometimes just hanging forever with no error at
+// all. That is very likely the real cause of the freeze, and it cannot be
+// fixed by any code inside this file — the browser blocks it a level above
+// anything JS can do. So: detect it immediately and say so, loudly, instead
+// of letting the person hit an invisible wall three screens later.
+// ════════════════════════════════════════════
+(function checkSecureContext(){
+  if(window.isSecureContext) return; // https:// or localhost — fine, camera/mic will work.
+  const banner=document.createElement('div');
+  banner.style.cssText='position:fixed;inset:0;z-index:2147483647;background:#0E1013;color:#fff;display:flex;align-items:center;justify-content:center;padding:24px;font-family:Inter,-apple-system,sans-serif;text-align:center;';
+  banner.innerHTML=`<div style="max-width:440px;">
+    <div style="font-size:34px;margin-bottom:14px;">⚠️</div>
+    <div style="font-size:19px;font-weight:800;margin-bottom:12px;">Camera &amp; microphone won't work here</div>
+    <div style="font-size:14px;line-height:1.7;color:#C7CCD6;margin-bottom:20px;">
+      This page is currently opened as <strong style="color:#F1685E;">${esc(location.protocol+'//'+(location.host||'a local file'))}</strong>.
+      Browsers only allow camera/mic/video calling on pages opened as
+      <strong style="color:#7B9CFF;">https://</strong> (or <strong style="color:#7B9CFF;">http://localhost</strong> on the same computer).
+      That's a browser security rule, not something this app can override.
+    </div>
+    <div style="font-size:13px;line-height:1.7;color:#9AA3B4;background:#1C2026;border-radius:10px;padding:14px;text-align:left;">
+      <strong style="color:#fff;">Quickest fix:</strong> go to <strong style="color:#7B9CFF;">app.netlify.com/drop</strong> on a computer, drag this HTML file onto the page — no account needed — and you'll get a real <strong style="color:#7B9CFF;">https://</strong> link back in a few seconds. Open that link instead, on any device.
+    </div>
+    <button onclick="this.closest('div').parentElement.remove()" style="margin-top:18px;background:#252A32;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-size:12.5px;font-weight:600;cursor:pointer;">Continue anyway (camera/mic will not work)</button>
+  </div>`;
+  document.addEventListener('DOMContentLoaded',()=>document.body.appendChild(banner));
+})();
+
 function recoverFromCrash(reason){
   console.error('Recovering from crash:',reason);
   try{
@@ -1356,22 +1390,44 @@ async function goToPrejoin(){
     gate.style.display='block';gate.textContent=`Live now — ${minsLeft} min remaining`;
   }
   $('pj-av').textContent=initials(S.name);
-  try{
-    const stream=await navigator.mediaDevices.getUserMedia({
-      video:{width:{ideal:1280},height:{ideal:720},frameRate:{ideal:30}},
-      audio:{echoCancellation:true,noiseSuppression:true,sampleRate:48000}
-    });
-    S.pjStream=stream;
-    $('pjv').srcObject=stream;$('pjv').play();
-    $('pj-noav').style.display='none';$('pjv').style.display='block';
-  }catch(e){
+
+  // Some browsers (in-app browsers inside Instagram/Facebook/WhatsApp/etc,
+  // and some WebViews) never resolve or reject the getUserMedia() promise at
+  // all if their camera support is broken — the page just hangs forever on
+  // this line with no error to catch. A hard timeout guarantees we always
+  // move on, even in that case, instead of freezing here permanently.
+  function getMediaWithTimeout(constraints,ms){
+    return Promise.race([
+      navigator.mediaDevices.getUserMedia(constraints),
+      new Promise((_,reject)=>setTimeout(()=>reject(new Error('camera-timeout')),ms))
+    ]);
+  }
+
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+    toast('This browser does not support camera/mic access — if you\'re inside an app\'s built-in browser (Instagram, Facebook, WhatsApp, etc), open this page in Chrome or Safari instead.',7000);
+    $('pjv').style.display='none';$('pj-noav').style.display='flex';
+    S.pjCamOn=false;updatePJBtns();
+  }else{
     try{
-      const stream=await navigator.mediaDevices.getUserMedia({video:true,audio:true});
-      S.pjStream=stream;$('pjv').srcObject=stream;$('pjv').play();
+      const stream=await getMediaWithTimeout({
+        video:{width:{ideal:1280},height:{ideal:720},frameRate:{ideal:30}},
+        audio:{echoCancellation:true,noiseSuppression:true,sampleRate:48000}
+      },9000);
+      S.pjStream=stream;
+      $('pjv').srcObject=stream;$('pjv').play();
       $('pj-noav').style.display='none';$('pjv').style.display='block';
-    }catch(e2){
-      $('pjv').style.display='none';$('pj-noav').style.display='flex';
-      S.pjCamOn=false;updatePJBtns();
+    }catch(e){
+      try{
+        const stream=await getMediaWithTimeout({video:true,audio:true},9000);
+        S.pjStream=stream;$('pjv').srcObject=stream;$('pjv').play();
+        $('pj-noav').style.display='none';$('pjv').style.display='block';
+      }catch(e2){
+        $('pjv').style.display='none';$('pj-noav').style.display='flex';
+        S.pjCamOn=false;updatePJBtns();
+        if(e2.message==='camera-timeout'){
+          toast('Camera/mic did not respond — continuing without them. If you\'re inside an app\'s built-in browser (Instagram, Facebook, WhatsApp), open this page in Chrome or Safari instead.',7000);
+        }
+      }
     }
   }
   updatePJBtns();
@@ -2231,7 +2287,7 @@ async function genAI(type){
   $('ai-loading').classList.remove('h');$('ai-res').classList.remove('show');st('ai');
   try{
     const res=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},
+      method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
       body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1400,system:'You are a helpful tutoring assistant. Generate clear, structured, actionable content from a class transcript.',messages:[{role:'user',content:ai.p+tr}]})
     });
     const data=await res.json();
