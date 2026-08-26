@@ -8,6 +8,12 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Manrope:wght@700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+<!-- Firebase (optional, free tier) — makes accounts/classes sync across every
+     browser and device instead of being stuck on one browser's local storage.
+     Leave firebaseConfig empty (see FIREBASE_CONFIG below) to run in
+     local-only mode: the app still works, but only on one device. -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
 
@@ -111,6 +117,13 @@ label{display:block;font-size:11.5px;font-weight:600;color:var(--text2);margin-b
 .hint-box{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:11px;color:var(--text2);line-height:1.65;margin-top:16px;}
 .hint-box strong{color:var(--text);font-family:'JetBrains Mono',monospace;font-weight:600;}
 .auth-theme-btn{position:fixed;top:18px;right:20px;z-index:5;}
+.sync-banner{background:var(--amber-soft);border:1px solid rgba(180,83,9,0.25);color:var(--amber);border-radius:8px;padding:8px 12px;font-size:11px;font-weight:600;text-align:center;display:none;}
+.sync-banner.show{display:block;}
+.mod-row{display:flex;gap:5px;margin-top:4px;}
+.mod-btn{background:none;border:1px solid rgba(255,255,255,0.14);color:#9AA3B4;font-size:9px;font-weight:600;padding:3px 7px;border-radius:5px;cursor:pointer;}
+.mod-btn:hover{background:rgba(220,38,38,0.16);color:#FF8A80;border-color:transparent;}
+.mod-panel-hdr{display:flex;align-items:center;justify-content:space-between;padding:0 10px 8px;}
+.admin-tag{font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:var(--accent);background:var(--accent-soft);padding:2px 6px;border-radius:4px;margin-left:5px;}
 
 /* ── DASH SHELL ── */
 .dash{flex:1;display:flex;flex-direction:column;background:var(--bg);}
@@ -380,6 +393,7 @@ label{display:block;font-size:11.5px;font-weight:600;color:var(--text2);margin-b
       <div style="margin-bottom:16px;"><label>Password</label><input class="input" type="password" id="auth-pass" placeholder="••••••••" autocomplete="off"></div>
       <button class="btn btn-primary btn-lg" style="width:100%;justify-content:center;" onclick="doLogin()">Sign in</button>
       <div class="hint-box">Admin login: <strong>admin@kreya.com</strong> / <strong>kreya2026!</strong><br>Sign in as admin to create teacher &amp; student accounts.</div>
+      <div class="sync-banner" id="sync-banner-auth" style="margin-top:10px;">Running in local-only mode — accounts won't sync across devices until Firebase is configured. See the comment at the top of this file's script.</div>
     </div>
   </div>
 </div>
@@ -397,13 +411,26 @@ label{display:block;font-size:11.5px;font-weight:600;color:var(--text2);margin-b
   <div class="dash">
     <div class="dash-body">
       <div class="eyebrow">Administration</div>
-      <div class="dash-hdr"><div><h2>Admin panel</h2><p>Create teacher &amp; student accounts and assign students to teachers.</p></div></div>
+      <div class="dash-hdr"><div><h2>Admin panel</h2><p>Create accounts, assign students, and oversee every class on the platform.</p></div></div>
+      <div class="sync-banner" id="sync-banner-admin" style="margin-bottom:16px;">Running in local-only mode — accounts and classes won't sync to other browsers/devices until Firebase is configured (see the script comment near the top of this file).</div>
       <div class="tabs">
-        <div class="tab on" id="atab-teachers" onclick="setAdminTab('teachers')">Teachers</div>
+        <div class="tab on" id="atab-classes" onclick="setAdminTab('classes')">All classes</div>
+        <div class="tab" id="atab-teachers" onclick="setAdminTab('teachers')">Teachers</div>
         <div class="tab" id="atab-students" onclick="setAdminTab('students')">Students</div>
       </div>
 
-      <div class="tabpage on" id="apage-teachers">
+      <div class="tabpage on" id="apage-classes">
+        <div class="dash-hdr" style="margin-bottom:14px;"><div><p style="margin:0;">Every scheduled class across every teacher. Join any live class, or schedule one yourself.</p></div><button class="btn btn-primary" onclick="openAdminScheduleModal()" id="admin-schedule-btn"></button></div>
+        <div class="two-col">
+          <div class="card">
+            <div class="cal-hdr"><span class="cal-title" id="admin-cal-title"></span><div class="cal-nav"><button class="btn btn-ghost btn-icon btn-sm" onclick="calMove('admin',-1)" id="admin-cal-prev"></button><button class="btn btn-ghost btn-icon btn-sm" onclick="calMove('admin',1)" id="admin-cal-next"></button></div></div>
+            <div class="cal-grid" id="admin-cal-grid"></div>
+          </div>
+          <div><div id="admin-agenda"></div></div>
+        </div>
+      </div>
+
+      <div class="tabpage" id="apage-teachers">
         <div class="two-col">
           <div class="card">
             <h3 style="font-size:13.5px;margin-bottom:12px;font-weight:700;">Add teacher</h3>
@@ -447,6 +474,7 @@ label{display:block;font-size:11.5px;font-weight:600;color:var(--text2);margin-b
     <div class="dash-body">
       <div class="eyebrow">Teacher dashboard</div>
       <div class="dash-hdr"><div><h2>My classes</h2><p>Schedule 1:1 classes with your students and manage recordings.</p></div><button class="btn btn-primary" onclick="openScheduleModal()" id="schedule-btn"></button></div>
+      <div class="sync-banner" id="sync-banner-teacher" style="margin-bottom:16px;">Running in local-only mode — this browser isn't syncing with other devices yet.</div>
       <div class="tabs">
         <div class="tab on" id="ttab-upcoming" onclick="setTeachTab('upcoming')">Calendar</div>
         <div class="tab" id="ttab-students" onclick="setTeachTab('students')">My students</div>
@@ -482,6 +510,7 @@ label{display:block;font-size:11.5px;font-weight:600;color:var(--text2);margin-b
     <div class="dash-body">
       <div class="eyebrow">Student dashboard</div>
       <div class="dash-hdr"><div><h2>My calendar</h2><p>Your scheduled 1:1 classes for this month.</p></div></div>
+      <div class="sync-banner" id="sync-banner-student" style="margin-bottom:16px;">Running in local-only mode — this browser isn't syncing with other devices yet.</div>
       <div class="tabs">
         <div class="tab on" id="stab-upcoming" onclick="setStuTab('upcoming')">Calendar</div>
         <div class="tab" id="stab-recordings" onclick="setStuTab('recordings')">Recordings</div>
@@ -598,6 +627,7 @@ label{display:block;font-size:11.5px;font-weight:600;color:var(--text2);margin-b
     </div>
     <div class="pcontent" id="pc-participants">
       <div class="p-hdr"><span style="font-size:12px;font-weight:600;color:#EDEFF3;">Participants</span><span class="p-count" id="p-count">1 person</span></div>
+      <div class="mod-panel-hdr hide" id="mod-panel-hdr"><span style="font-size:9.5px;color:#6B7280;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;">Moderator</span><button class="btn btn-red btn-sm" onclick="modMuteAll()" id="mod-mute-all-btn"></button></div>
       <div class="plist" id="plist"></div>
     </div>
     <div class="pcontent" id="pc-ai">
@@ -667,6 +697,22 @@ label{display:block;font-size:11.5px;font-weight:600;color:var(--text2);margin-b
     </div>
     <div style="margin-top:10px;"><label>Duration (minutes)</label><input class="input" type="number" id="sch-duration" value="60" min="15" step="15"></div>
     <div class="modal-btns"><button class="btn btn-ghost" onclick="closeModal('schedule-overlay')">Cancel</button><button class="btn btn-primary" onclick="submitScheduleClass()">Schedule</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="admin-schedule-overlay">
+  <div class="modal">
+    <h3>Schedule a class</h3>
+    <p class="sub">Pick a teacher and one of their students.</p>
+    <div style="margin-bottom:10px;"><label>Teacher</label><select class="input" id="asch-teacher" onchange="adminScheduleTeacherChanged()"></select></div>
+    <div style="margin-bottom:10px;"><label>Student</label><select class="input" id="asch-student"></select></div>
+    <div style="margin-bottom:10px;"><label>Class title</label><input class="input" id="asch-title" placeholder="e.g. Physics — Kinematics"></div>
+    <div style="display:flex;gap:8px;">
+      <div style="flex:1;"><label>Date</label><input class="input" type="date" id="asch-date"></div>
+      <div style="flex:1;"><label>Time</label><input class="input" type="time" id="asch-time"></div>
+    </div>
+    <div style="margin-top:10px;"><label>Duration (minutes)</label><input class="input" type="number" id="asch-duration" value="60" min="15" step="15"></div>
+    <div class="modal-btns"><button class="btn btn-ghost" onclick="closeModal('admin-schedule-overlay')">Cancel</button><button class="btn btn-primary" onclick="submitAdminScheduleClass()">Schedule</button></div>
   </div>
 </div>
 
@@ -758,6 +804,10 @@ function wireStaticIcons(){
   $('teach-cal-next').innerHTML=ic('chevronRight');
   $('stu-cal-prev').innerHTML=ic('chevronLeft');
   $('stu-cal-next').innerHTML=ic('chevronRight');
+  $('admin-cal-prev').innerHTML=ic('chevronLeft');
+  $('admin-cal-next').innerHTML=ic('chevronRight');
+  $('admin-schedule-btn').innerHTML=ic('plus')+'<span>Schedule class</span>';
+  $('mod-mute-all-btn').textContent='Mute all';
   $('hdr-people-btn').innerHTML=ic('users');
   $('hdr-chat-btn').innerHTML=ic('chat');
   $('ai-hdr-btn').innerHTML=ic('sparkles')+'<span style="font-size:11px;font-weight:600;">AI</span>';
@@ -806,8 +856,23 @@ function updateThemeBtn(){
 // real deployment — a production build needs a real backend with
 // hashed passwords and server-side auth.
 // ════════════════════════════════════════════
+// ── FIREBASE_CONFIG ──────────────────────────────────────────────
+// To make accounts and classes sync across every browser/device
+// (fixing "I made a teacher on my laptop but it's not on my phone"):
+//   1. console.firebase.google.com → Add project (free)
+//   2. Build → Firestore Database → Create database (test mode is fine)
+//   3. Project settings → General → Add app → Web app → copy the config
+//   4. Paste it below. That's it — no server to run or maintain.
+// Leave this empty and the app runs in local-only mode (each browser
+// keeps its own separate copy of accounts/classes).
+const FIREBASE_CONFIG={
+  apiKey:"", authDomain:"", projectId:"", storageBucket:"", messagingSenderId:"", appId:""
+};
+let fbDB=null,FIREBASE_ON=false,usersLoaded=false,classesLoaded=false;
+const SEED_ADMIN={id:'admin-1',role:'admin',name:'Kreya Admin',email:'admin@kreya.com',password:'kreya2026!'};
+
 const DB={
-  users:JSON.parse(localStorage.getItem('pw_users')||'null')||[{id:'admin-1',role:'admin',name:'Kreya Admin',email:'admin@kreya.com',password:'kreya2026!'}],
+  users:JSON.parse(localStorage.getItem('pw_users')||'null')||[SEED_ADMIN],
   classes:JSON.parse(localStorage.getItem('pw_classes')||'[]')
 };
 function saveDB(){localStorage.setItem('pw_users',JSON.stringify(DB.users));localStorage.setItem('pw_classes',JSON.stringify(DB.classes));}
@@ -818,6 +883,53 @@ function saveDB(){localStorage.setItem('pw_users',JSON.stringify(DB.users));loca
   }
 })();
 saveDB();
+
+function initFirebase(){
+  if(!FIREBASE_CONFIG.apiKey){
+    FIREBASE_ON=false;
+    document.querySelectorAll('.sync-banner').forEach(b=>b.classList.add('show'));
+    return;
+  }
+  try{
+    firebase.initializeApp(FIREBASE_CONFIG);
+    fbDB=firebase.firestore();
+    FIREBASE_ON=true;
+    fbDB.collection('kc_users').onSnapshot(snap=>{
+      DB.users=snap.docs.map(d=>({id:d.id,...d.data()}));
+      if(!snap.docs.length)fbDB.collection('kc_users').doc(SEED_ADMIN.id).set(SEED_ADMIN);
+      usersLoaded=true;
+      if(CU){const me=DB.users.find(u=>u.id===CU.id);if(me)CU=me;}
+      if(CU)route();
+    },err=>{console.warn('Firestore users listener failed, falling back to local storage',err);FIREBASE_ON=false;document.querySelectorAll('.sync-banner').forEach(b=>b.classList.add('show'));});
+    fbDB.collection('kc_classes').onSnapshot(snap=>{
+      DB.classes=snap.docs.map(d=>({id:d.id,...d.data()}));
+      classesLoaded=true;
+      if(CU)route();
+    },err=>console.warn('Firestore classes listener failed',err));
+  }catch(e){
+    console.warn('Firebase init failed, falling back to local storage',e);
+    FIREBASE_ON=false;
+    document.querySelectorAll('.sync-banner').forEach(b=>b.classList.add('show'));
+  }
+}
+// ── DB write helpers: go to Firestore when configured, otherwise
+// mutate the local array + localStorage exactly as before. ──
+function dbPutUser(user){
+  if(FIREBASE_ON){fbDB.collection('kc_users').doc(user.id).set(user);}
+  else{const i=DB.users.findIndex(u=>u.id===user.id);if(i>=0)DB.users[i]=user;else DB.users.push(user);saveDB();}
+}
+function dbDeleteUser(id){
+  if(FIREBASE_ON){fbDB.collection('kc_users').doc(id).delete();DB.classes.filter(c=>c.teacherId===id||c.studentId===id).forEach(c=>fbDB.collection('kc_classes').doc(c.id).delete());}
+  else{DB.users=DB.users.filter(x=>x.id!==id);DB.classes=DB.classes.filter(c=>c.teacherId!==id&&c.studentId!==id);saveDB();}
+}
+function dbPutClass(cls){
+  if(FIREBASE_ON){fbDB.collection('kc_classes').doc(cls.id).set(cls);}
+  else{const i=DB.classes.findIndex(c=>c.id===cls.id);if(i>=0)DB.classes[i]=cls;else DB.classes.push(cls);saveDB();}
+}
+function dbDeleteClass(id){
+  if(FIREBASE_ON){fbDB.collection('kc_classes').doc(id).delete();}
+  else{DB.classes=DB.classes.filter(c=>c.id!==id);saveDB();}
+}
 
 let CU=null;
 (function restoreSession(){
@@ -851,6 +963,7 @@ function route(){
 document.addEventListener('DOMContentLoaded',()=>{
   initTheme();
   wireStaticIcons();
+  initFirebase();
   $('auth-pass')?.addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
   $('chat-inp')?.addEventListener('keydown',e=>{if(e.key==='Enter')sendChat();});
   if(CU)route();
@@ -867,6 +980,7 @@ function setAdminTab(t){
 function renderAdmin(){
   $('admin-name').textContent=CU.name;$('admin-av').textContent=initials(CU.name);
   renderTeacherSelect();
+  renderAdminClasses();
   const teachers=DB.users.filter(u=>u.role==='teacher');
   const tl=$('teacher-list');
   tl.innerHTML=teachers.length?'':'<div class="empty-note">No teachers yet — add one on the left.</div>';
@@ -902,40 +1016,97 @@ function addTeacher(){
   const name=($('t-name').value||'').trim(),email=($('t-email').value||'').trim().toLowerCase(),pass=$('t-pass').value||'';
   if(!name||!email||!pass){toast('Fill in all fields');return;}
   if(DB.users.some(u=>u.email.toLowerCase()===email)){toast('That email is already in use');return;}
-  DB.users.push({id:uid(),role:'teacher',name,email,password:pass});saveDB();
+  dbPutUser({id:uid(),role:'teacher',name,email,password:pass});
   $('t-name').value='';$('t-email').value='';$('t-pass').value='';
-  renderAdmin();toast('Teacher account created');
+  if(!FIREBASE_ON)renderAdmin();
+  toast('Teacher account created');
 }
 function addStudent(){
   const name=($('s-name').value||'').trim(),email=($('s-email').value||'').trim().toLowerCase(),pass=$('s-pass').value||'',teacherId=$('s-teacher').value||'';
   if(!name||!email||!pass){toast('Fill in all fields');return;}
   if(DB.users.some(u=>u.email.toLowerCase()===email)){toast('That email is already in use');return;}
-  DB.users.push({id:uid(),role:'student',name,email,password:pass,assignedTeacherId:teacherId||null});saveDB();
+  dbPutUser({id:uid(),role:'student',name,email,password:pass,assignedTeacherId:teacherId||null});
   $('s-name').value='';$('s-email').value='';$('s-pass').value='';
-  renderAdmin();toast('Student account created');
+  if(!FIREBASE_ON)renderAdmin();
+  toast('Student account created');
 }
 function reassignStudent(studentId,teacherId){
   const s=DB.users.find(u=>u.id===studentId);if(!s)return;
-  s.assignedTeacherId=teacherId||null;saveDB();renderAdmin();toast('Teacher assignment updated');
+  dbPutUser({...s,assignedTeacherId:teacherId||null});
+  if(!FIREBASE_ON)renderAdmin();
+  toast('Teacher assignment updated');
 }
 function deleteUser(id){
   const u=DB.users.find(x=>x.id===id);if(!u)return;
   if(!confirm(`Remove ${u.name}? This also removes their scheduled classes.`))return;
-  DB.users=DB.users.filter(x=>x.id!==id);
-  DB.classes=DB.classes.filter(c=>c.teacherId!==id&&c.studentId!==id);
-  saveDB();renderAdmin();toast('Removed');
+  dbDeleteUser(id);
+  if(!FIREBASE_ON)renderAdmin();
+  toast('Removed');
+}
+
+// ── Admin: all-classes oversight + platform-wide scheduling ──
+function renderAdminClasses(){
+  if(!$('admin-cal-grid'))return;
+  const c=CAL.admin;
+  const all=DB.classes;
+  const monthClasses=all.filter(cl=>{const d=new Date(cl.date+'T00:00');return d.getFullYear()===c.y&&d.getMonth()===c.m;});
+  renderCalendarGrid('admin','admin-cal-grid','admin-cal-title',monthClasses);
+
+  let list=c.sel?all.filter(cl=>cl.date===c.sel):all.slice();
+  list=list.filter(cl=>c.sel?true:classState(cl).state!=='past').sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+  const wrap=$('admin-agenda');wrap.innerHTML='';
+  if(!list.length){wrap.innerHTML='<div class="card"><div class="empty-note">No classes'+(c.sel?' on this day':' scheduled yet')+'.</div></div>';}
+  list.forEach(cl=>{
+    const st=classState(cl);
+    const item=document.createElement('div');item.className='class-item';
+    item.innerHTML=`<div class="class-dot ${st.state==='live'?'live':st.state==='past'?'past':''}"></div>
+      <div class="class-info"><div class="class-title">${esc(cl.title)}<span class="class-badge ${st.state==='live'?'live':''}">${cl.date} · ${fmtTime(cl.time)}</span>${cl.recorded?'<span class="class-badge rec">recorded</span>':''}</div>
+      <div class="class-sub">${esc(teacherName(cl.teacherId))} · ${esc(studentName(cl.studentId))} · ${cl.duration} min</div></div>
+      <div class="class-acts">
+        ${st.state==='live'?`<button class="btn btn-green btn-sm" onclick="joinScheduledClass('${cl.id}','admin')">Join now</button>`:st.state==='upcoming'?`<button class="btn btn-ghost btn-sm" disabled>Not yet</button>`:`<button class="btn btn-ghost btn-sm" disabled>Ended</button>`}
+        <button class="icon-btn" onclick="deleteClassAsAdmin('${cl.id}')" title="Cancel">${ICONS.x}</button>
+      </div>`;
+    wrap.appendChild(item);
+  });
+}
+function deleteClassAsAdmin(id){
+  if(!confirm('Cancel this class?'))return;
+  dbDeleteClass(id);if(!FIREBASE_ON)renderAdminClasses();toast('Class cancelled');
+}
+function openAdminScheduleModal(){
+  const teachers=DB.users.filter(u=>u.role==='teacher');
+  if(!teachers.length){toast('Add a teacher first');return;}
+  $('asch-teacher').innerHTML=teachers.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('');
+  $('asch-title').value='';$('asch-date').value='';$('asch-time').value='';$('asch-duration').value=60;
+  adminScheduleTeacherChanged();
+  showModal('admin-schedule-overlay');
+}
+function adminScheduleTeacherChanged(){
+  const teacherId=$('asch-teacher').value;
+  const students=DB.users.filter(u=>u.role==='student'&&u.assignedTeacherId===teacherId);
+  $('asch-student').innerHTML=students.length?students.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join(''):'<option value="">— No students assigned to this teacher —</option>';
+}
+function submitAdminScheduleClass(){
+  const teacherId=$('asch-teacher').value,studentId=$('asch-student').value,title=($('asch-title').value||'').trim(),date=$('asch-date').value,time=$('asch-time').value,duration=Number($('asch-duration').value)||60;
+  if(!teacherId||!studentId||!title||!date||!time){toast('Fill in all fields');return;}
+  dbPutClass({id:uid(),teacherId,studentId,title,date,time,duration,meetingCode:'kc-'+uid(),recorded:false});
+  closeModal('admin-schedule-overlay');if(!FIREBASE_ON)renderAdminClasses();toast('Class scheduled');
 }
 
 // ════════════════════════════════════════════
 // CALENDAR (shared renderer)
 // ════════════════════════════════════════════
-const CAL={teacher:{y:new Date().getFullYear(),m:new Date().getMonth(),sel:null},student:{y:new Date().getFullYear(),m:new Date().getMonth(),sel:null}};
+const CAL={
+  teacher:{y:new Date().getFullYear(),m:new Date().getMonth(),sel:null},
+  student:{y:new Date().getFullYear(),m:new Date().getMonth(),sel:null},
+  admin:{y:new Date().getFullYear(),m:new Date().getMonth(),sel:null}
+};
 const MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
 function calMove(who,dir){
   const c=CAL[who];c.m+=dir;
   if(c.m<0){c.m=11;c.y--;}if(c.m>11){c.m=0;c.y++;}
   c.sel=null;
-  if(who==='teacher')renderTeacherDash();else renderStudentDash();
+  if(who==='teacher')renderTeacherDash();else if(who==='student')renderStudentDash();else renderAdminClasses();
 }
 function dateKey(y,m,d){return `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;}
 function renderCalendarGrid(who,gridId,titleId,classesForMonth){
@@ -955,7 +1126,7 @@ function renderCalendarGrid(who,gridId,titleId,classesForMonth){
     const el=document.createElement('div');
     el.className=`cal-cell${has?' has':''}${key===todayKey?' today':''}${c.sel===key?' sel':''}`;
     el.innerHTML=`${d}${has?'<span class="cal-dot"></span>':''}`;
-    if(has)el.onclick=()=>{c.sel=(c.sel===key)?null:key;if(who==='teacher')renderTeacherDash();else renderStudentDash();};
+    if(has)el.onclick=()=>{c.sel=(c.sel===key)?null:key;if(who==='teacher')renderTeacherDash();else if(who==='student')renderStudentDash();else renderAdminClasses();};
     grid.appendChild(el);
   }
 }
@@ -1041,12 +1212,12 @@ function openScheduleModal(){
 function submitScheduleClass(){
   const studentId=$('sch-student').value,title=($('sch-title').value||'').trim(),date=$('sch-date').value,time=$('sch-time').value,duration=Number($('sch-duration').value)||60;
   if(!studentId||!title||!date||!time){toast('Fill in all fields');return;}
-  DB.classes.push({id:uid(),teacherId:CU.id,studentId,title,date,time,duration,meetingCode:'kc-'+uid(),recorded:false});
-  saveDB();closeModal('schedule-overlay');renderTeacherDash();toast('Class scheduled');
+  dbPutClass({id:uid(),teacherId:CU.id,studentId,title,date,time,duration,meetingCode:'kc-'+uid(),recorded:false});
+  closeModal('schedule-overlay');if(!FIREBASE_ON)renderTeacherDash();toast('Class scheduled');
 }
 function deleteClass(id){
   if(!confirm('Cancel this class?'))return;
-  DB.classes=DB.classes.filter(c=>c.id!==id);saveDB();renderTeacherDash();toast('Class cancelled');
+  dbDeleteClass(id);if(!FIREBASE_ON)renderTeacherDash();toast('Class cancelled');
 }
 
 // ════════════════════════════════════════════
@@ -1156,7 +1327,8 @@ async function goToPrejoin(){
   const cl=S.currentClass;
   $('pj-class-title').textContent=cl.title;
   $('pj-class-sub').textContent=`${cl.date} · ${fmtTime(cl.time)} · ${cl.duration} min`;
-  $('host-badge').style.display=S.isHost?'block':'none';
+  $('host-badge').style.display=(S.isHost||S.role==='admin')?'block':'none';
+  $('host-badge').textContent=S.isHost?"You're teaching this class":'Joining with admin oversight — you\'ll be admitted automatically';
   const st=classState(cl);
   const gate=$('gate-badge');
   if(st.state==='live'){
@@ -1264,9 +1436,16 @@ function setupHostListeners(){
 function handleGuestMsg(conn,msg){
   switch(msg.type){
     case'knock':
-      conn.metadata={userId:msg.userId,name:msg.name};
+      conn.metadata={userId:msg.userId,name:msg.name,role:msg.role};
       S.guestConns[msg.userId]=conn;
-      showAdmitBar(msg.userId,msg.name);
+      if(msg.role==='admin'){
+        // Admins have full oversight of every class and are auto-admitted —
+        // they never need to knock and wait like a regular guest.
+        toast(`${msg.name} (admin) joined the class`);
+        admitByUserId(msg.userId,msg.name);
+      }else{
+        showAdmitBar(msg.userId,msg.name);
+      }
       break;
     case'knock-cancel':
       if(S.pendingKnocker?.userId===msg.userId)hideAdmitBar();
@@ -1274,11 +1453,11 @@ function handleGuestMsg(conn,msg){
       break;
     case'participant-joined':
       if(!S.participants[msg.userId]){
-        addPeer(msg.userId,msg.name,msg.color);
+        addPeer(msg.userId,msg.name,msg.color,msg.role);
         addSys(`${msg.name} joined`);
-        broadcastToGuests({type:'participant-joined',userId:msg.userId,name:msg.name,color:msg.color},msg.userId);
-        const roster=Object.values(S.participants).map(p=>({userId:p.userId,name:p.name,color:p.color}));
-        roster.push({userId:MY_ID,name:S.name,color:'#2954E0',isHost:true});
+        broadcastToGuests({type:'participant-joined',userId:msg.userId,name:msg.name,color:msg.color,role:msg.role},msg.userId);
+        const roster=Object.values(S.participants).map(p=>({userId:p.userId,name:p.name,color:p.color,role:p.role}));
+        roster.push({userId:MY_ID,name:S.name,color:'#2954E0',isHost:true,role:S.role});
         conn.send({type:'roster',participants:roster,hostId:MY_ID});
       }
       break;
@@ -1295,6 +1474,14 @@ function handleGuestMsg(conn,msg){
       break;
     case'transcript': broadcastToGuests(msg,msg.userId);break;
     case'rec-status': broadcastToGuests(msg,'');break;
+    case'mod-mute-all': broadcastToGuests({type:'mute-all'});toast('Admin muted everyone');break;
+    case'mod-remove':{
+      const targetId=msg.targetId,name=S.participants[targetId]?.name||'Participant';
+      sendToGuest(targetId,{type:'remove',targetId});
+      if(S.guestConns[targetId])S.guestConns[targetId].close();
+      removePeer(targetId,name);
+      break;}
+    case'mod-stop-share': sendToGuest(msg.targetId,{type:'force-stop-share'});break;
   }
 }
 function broadcastToGuests(msg,skipId){Object.entries(S.guestConns).forEach(([uidv,conn])=>{if(uidv!==skipId&&conn.open)conn.send(msg);});}
@@ -1307,7 +1494,7 @@ function connectAsGuest(){
   guestPeer.on('open',()=>{
     const conn=guestPeer.connect(hostPeerId(),{reliable:true,metadata:{userId:MY_ID,name:S.name}});
     S.hostConn=conn;
-    conn.on('open',()=>{toast('Connected — waiting to be admitted…');conn.send({type:'knock',userId:MY_ID,name:S.name});});
+    conn.on('open',()=>{toast(S.role==='admin'?'Connected…':'Connected — waiting to be admitted…');conn.send({type:'knock',userId:MY_ID,name:S.name,role:S.role});});
     conn.on('data',data=>handleHostMsg(data));
     conn.on('error',err=>toast('Connection error: '+err.message));
     conn.on('close',()=>{if($('s-meeting').classList.contains('active'))addSys('Disconnected from host');});
@@ -1335,7 +1522,7 @@ function handleHostMsg(msg){
       toast('You have been admitted');
       startMeeting();
       const myColor=COLORS[Math.floor(Math.random()*COLORS.length)];
-      if(S.hostConn&&S.hostConn.open)S.hostConn.send({type:'participant-joined',userId:MY_ID,name:S.name,color:myColor});
+      if(S.hostConn&&S.hostConn.open)S.hostConn.send({type:'participant-joined',userId:MY_ID,name:S.name,color:myColor,role:S.role});
       if(S.peer&&S.stream){
         setTimeout(()=>{
           try{
@@ -1353,10 +1540,26 @@ function handleHostMsg(msg){
     case'rejected': toast('The teacher declined your request.');setTimeout(backToDash,2200);break;
     case'roster':
       if(msg.hostId)S.hostUserId=msg.hostId;
-      (msg.participants||[]).forEach(p=>{if(p.userId!==MY_ID&&!S.participants[p.userId])S.participants[p.userId]={userId:p.userId,name:p.name,color:p.color,muted:false,camOn:true,handRaised:false};});
+      (msg.participants||[]).forEach(p=>{if(p.userId!==MY_ID&&!S.participants[p.userId])S.participants[p.userId]={userId:p.userId,name:p.name,color:p.color,muted:false,camOn:true,handRaised:false,role:p.role};});
       renderGrid();renderParticipants();
+      // Mesh: call every other participant directly (not just the host) so
+      // a 3-way class (teacher + student + admin) can all see/hear each
+      // other. For guest<->guest legs only one side initiates (a simple id
+      // tie-break) so we don't open two redundant connections for the same
+      // pair; whichever side doesn't initiate just answers the incoming call.
+      (msg.participants||[]).forEach(p=>{
+        if(p.userId===MY_ID)return;
+        if(p.isHost){callPeerDirect(hostPeerId(),p.userId);}
+        else if(MY_ID>p.userId){callPeerDirect('kuser-'+p.userId,p.userId);}
+      });
       break;
-    case'participant-joined': if(msg.userId!==MY_ID){addPeer(msg.userId,msg.name,msg.color);addSys(`${msg.name} joined`);}break;
+    case'participant-joined':
+      if(msg.userId!==MY_ID){
+        addPeer(msg.userId,msg.name,msg.color,msg.role);
+        addSys(`${msg.name} joined`);
+        if(MY_ID>msg.userId)callPeerDirect('kuser-'+msg.userId,msg.userId);
+      }
+      break;
     case'participant-left': if(msg.userId!==MY_ID)removePeer(msg.userId,msg.name);break;
     case'chat': if(msg.userId!==MY_ID)addMsg(msg.name,msg.text,false);break;
     case'reaction': if(msg.userId!==MY_ID)showReactionTile(msg.userId,msg.emoji);break;
@@ -1368,7 +1571,9 @@ function handleHostMsg(msg){
         renderParticipants();updatePeerTile(msg.userId);
       }
       break;
-    case'remove': if(msg.targetId===MY_ID){toast('Removed by teacher.');setTimeout(endMeeting,1500);}break;
+    case'remove': if(msg.targetId===MY_ID){toast('You were removed from the class.');setTimeout(endMeeting,1500);}break;
+    case'mute-all': applyMute(true);toast('You were muted by a moderator');break;
+    case'force-stop-share': if(S.sharing){stopShare();toast('A moderator stopped your screen share');}break;
     case'transcript':{
       const tbox=$('tbox');
       if(tbox){const p=document.createElement('p');p.style.marginBottom='3px';p.innerHTML=`<strong style="color:#7B9CFF">${esc(msg.speaker||'?')}:</strong> ${esc(msg.text||'')}`;tbox.appendChild(p);tbox.scrollTop=tbox.scrollHeight;}
@@ -1378,21 +1583,37 @@ function handleHostMsg(msg){
   }
 }
 function broadcast(msg){if(S.isHost)broadcastToGuests(msg,MY_ID);else if(S.hostConn&&S.hostConn.open)S.hostConn.send(msg);}
+// Directly call another participant's media peer (used for the guest-to-guest
+// leg of a 3-way class, since only host<->guest legs happen automatically).
+function callPeerDirect(peerId,targetUserId){
+  if(!S.peer||!S.stream)return;
+  if(S.mediaCalls[peerId])return;
+  try{
+    const call=S.peer.call(peerId,S.stream);
+    call.on('stream',remoteStream=>{displayPeerStream(targetUserId,remoteStream);});
+    call.on('error',e=>console.warn('mesh call error',e));
+    S.mediaCalls[peerId]=call;
+  }catch(e){console.warn('mesh call failed',e);}
+}
 
 function showAdmitBar(uidv,name){S.pendingKnocker={userId:uidv,name};$('admit-av').textContent=initials(name);$('admit-name').textContent=name;$('admit-bar').classList.add('show');}
 function hideAdmitBar(){S.pendingKnocker=null;$('admit-bar').classList.remove('show');}
 function admitKnocker(){
   if(!S.pendingKnocker)return;
   const uidv=S.pendingKnocker.userId,name=S.pendingKnocker.name;
+  admitByUserId(uidv,name);
+  hideAdmitBar();
+}
+function admitByUserId(uidv,name){
   sendToGuest(uidv,{type:'admitted',targetId:uidv,hostId:MY_ID});
-  toast(`${name} admitted`);hideAdmitBar();
+  toast(`${name} admitted`);
   if(S.peer&&S.stream){
     const guestPid='kuser-'+uidv;
     setTimeout(()=>{
       try{
         const call=S.peer.call(guestPid,S.stream);
         call.on('stream',remoteStream=>{
-          if(!S.participants[uidv]){S.participants[uidv]={userId:uidv,name,color:COLORS[Object.keys(S.participants).length%COLORS.length],muted:false,camOn:true,handRaised:false};renderGrid();renderParticipants();}
+          if(!S.participants[uidv]){S.participants[uidv]={userId:uidv,name,color:COLORS[Object.keys(S.participants).length%COLORS.length],muted:false,camOn:true,handRaised:false,role:S.guestConns[uidv]?.metadata?.role||'guest'};renderGrid();renderParticipants();}
           displayPeerStream(uidv,remoteStream);
         });
         call.on('error',e=>console.warn('host call error',e));
@@ -1453,18 +1674,51 @@ function applyRoleControls(role){
   // Teacher: only Screen Share + End are available — no mic/cam/hand/bg toggle,
   // no manual recording control (it is automatic). Mic stays live so the
   // teacher can still be heard while presenting.
+  // Student: full self controls, no moderation powers, no AI panel.
+  // Admin: full self controls PLUS moderation (mute-all / remove / stop
+  // someone's share) — admins have complete oversight of every class.
   const hide=ids=>ids.forEach(id=>{const w=$(id);if(w)w.style.display='none';});
   if(role==='teacher'){
     hide(['wrap-mic','wrap-cam','wrap-hand','wrap-bg','wrap-react']);
     S.camOn=false;if(S.stream)S.stream.getVideoTracks().forEach(t=>t.enabled=false);
     if(S.stream)S.stream.getAudioTracks().forEach(t=>t.enabled=true);
     selfSyncUI();
-  }else{
+  }else if(role==='student'){
     hide(['wrap-share']);
     const aiTab=$('tab-ai'),aiBtn=$('ai-hdr-btn');
     if(aiTab)aiTab.classList.add('hide');if(aiBtn)aiBtn.style.display='none';
   }
+  // role==='admin': nothing hidden — full controls.
+  const modHdr=$('mod-panel-hdr');
+  if(modHdr){if(role==='admin')modHdr.classList.remove('hide');else modHdr.classList.add('hide');}
   refreshControlIcons();
+  renderParticipants();
+}
+
+// ── Moderation (admin only): commands are sent to the signaling host
+// (the teacher's device, which actually owns the data connections) and
+// the host carries them out / relays them onward. This mirrors how the
+// rest of the room's signaling already works — there's no separate
+// server, so the host is the point of authority for the room. ──
+function modMuteAll(){
+  if(S.isHost){broadcastToGuests({type:'mute-all'});}
+  else if(S.hostConn&&S.hostConn.open){S.hostConn.send({type:'mod-mute-all'});}
+  toast('Muted everyone');
+}
+function modRemove(targetUserId,name){
+  if(!confirm(`Remove ${name} from this class?`))return;
+  if(S.isHost){
+    sendToGuest(targetUserId,{type:'remove',targetId:targetUserId});
+    if(S.guestConns[targetUserId])S.guestConns[targetUserId].close();
+    removePeer(targetUserId,name);
+  }else if(S.hostConn&&S.hostConn.open){
+    S.hostConn.send({type:'mod-remove',targetId:targetUserId});
+  }
+}
+function modStopShare(targetUserId){
+  if(S.isHost){sendToGuest(targetUserId,{type:'force-stop-share'});}
+  else if(S.hostConn&&S.hostConn.open){S.hostConn.send({type:'mod-stop-share',targetId:targetUserId});}
+  toast('Asked them to stop presenting');
 }
 function refreshControlIcons(){
   $('btn-mic').innerHTML=`<span class="ic">${S.muted?ICONS.micOff:ICONS.mic}</span>`;
@@ -1549,7 +1803,7 @@ function updatePeerTile(uidv){
   const ex=tile.querySelector('.hand-ind');if(ex)ex.remove();
   if(p.handRaised){const h=document.createElement('div');h.className='hand-ind';h.textContent='✋';tile.appendChild(h);}
 }
-function addPeer(uidv,name,color){S.participants[uidv]={userId:uidv,name,color,muted:false,camOn:true,handRaised:false};renderGrid();renderParticipants();}
+function addPeer(uidv,name,color,role){S.participants[uidv]={userId:uidv,name,color,muted:false,camOn:true,handRaised:false,role:role||'guest'};renderGrid();renderParticipants();}
 function mixRemoteAudio(uidv,remoteStream){
   if(!remoteStream||!remoteStream.getAudioTracks().length)return;
   if(!S.recRemoteNodes)S.recRemoteNodes={};
@@ -1861,7 +2115,7 @@ async function saveRecording(){
     try{
       await idbSaveRecording(S.currentClass.id,blob);
       const cls=DB.classes.find(c=>c.id===S.currentClass.id);
-      if(cls){cls.recorded=true;saveDB();}
+      if(cls)dbPutClass({...cls,recorded:true});
       toast('Recording saved — available under Recordings (playback only, no download)',4200);
     }catch(e){toast('Could not save recording: '+e.message);}
   }
@@ -1996,15 +2250,21 @@ function addMsg(author,text,isYou){
   el.appendChild(d);el.scrollTop=el.scrollHeight;
 }
 function sendChat(){const inp=$('chat-inp');const txt=(inp.value||'').trim();if(!txt)return;addMsg(S.name,txt,true);broadcast({type:'chat',userId:MY_ID,name:S.name,text:txt});inp.value='';}
+function roleLabel(role){return role==='admin'?'Admin':role==='teacher'?'Teacher':role==='student'?'Student':'Participant';}
 function renderParticipants(){
   const list=$('plist');if(!list)return;
-  const all=[{userId:'self',name:S.name,color:'#2954E0',muted:S.muted,camOn:S.camOn,handRaised:S.handRaised,isYou:true},...Object.values(S.participants)];
+  const all=[{userId:'self',name:S.name,color:'#2954E0',muted:S.muted,camOn:S.camOn,handRaised:S.handRaised,isYou:true,role:S.role},...Object.values(S.participants)];
   list.innerHTML='';
+  const iAmAdmin=S.role==='admin';
   all.forEach(p=>{
     const init=initials(p.name);
     const d=document.createElement('div');d.className='pitem';
+    const modRow=(iAmAdmin&&!p.isYou)?`<div class="mod-row">
+        <button class="mod-btn" onclick="modRemove('${p.userId}','${esc(p.name)}')">Remove</button>
+        <button class="mod-btn" onclick="modStopShare('${p.userId}')">Stop share</button>
+      </div>`:'';
     d.innerHTML=`<div class="pav" style="background:${p.color}">${init}</div>
-      <div class="p-info"><div class="p-name">${esc(p.name)}${p.isYou?' (You)':''}${p.handRaised?' ✋':''}</div><div class="p-role">${p.isYou?(S.isHost?'Teacher':'You'):(S.isHost?'Student':'Teacher')}</div></div>
+      <div class="p-info"><div class="p-name">${esc(p.name)}${p.isYou?' (You)':''}${p.handRaised?' ✋':''}</div><div class="p-role">${roleLabel(p.role)}${p.role==='admin'?'<span class="admin-tag">Oversight</span>':''}</div>${modRow}</div>
       <div class="p-icons">${p.muted?icS('micOff'):icS('mic')}${p.camOn!==false?icS('video'):icS('videoOff')}</div>`;
     list.appendChild(d);
   });
