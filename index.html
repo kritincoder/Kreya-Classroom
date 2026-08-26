@@ -764,6 +764,21 @@ function ic(name,cls){return `<span class="ic ${cls||''}">${ICONS[name]||''}</sp
 function icS(name){return `<span class="ic-sm">${ICONS[name]||''}</span>`;}
 
 // ════════════════════════════════════════════
+// GLOBAL SAFETY NET — if any uncaught error happens anywhere in the app,
+// don't leave the person stuck on a broken/blank screen. Show a toast and
+// bounce back to their dashboard automatically.
+// ════════════════════════════════════════════
+window.addEventListener('error',function(e){
+  console.error('Unhandled error',e.error||e.message);
+  try{
+    const t=document.getElementById('toast');
+    if(t){t.textContent='Something went wrong — returning you to your dashboard';t.classList.add('show');setTimeout(()=>t.classList.remove('show'),4000);}
+  }catch(_e){}
+  try{ if(typeof stopAll==='function') stopAll(); }catch(_e){}
+  try{ if(typeof route==='function') setTimeout(route,600); }catch(_e){}
+});
+
+// ════════════════════════════════════════════
 // CANVAS POLYFILL
 // ════════════════════════════════════════════
 if(!CanvasRenderingContext2D.prototype.roundRect){
@@ -1658,37 +1673,34 @@ function destroyRecVids(){
 // START MEETING
 // ════════════════════════════════════════════
 function startMeeting(){
-  setScreen('s-meeting');
-  $('m-link').textContent=S.currentClass?S.currentClass.title:'';$('c-name').textContent=S.name;
-  initCamVid();
-  if(S.isHost)openHostPeer();
-  renderGrid();renderParticipants();
-  addSys('Class started');
-  if(S.isHost)addSys('Waiting for your student to join…');
-  startTimer();
-  applyRoleControls(S.role);
-  if(S.isHost)scheduleAutoEnd();
+  try{
+    setScreen('s-meeting');
+    $('m-link').textContent=S.currentClass?S.currentClass.title:'';$('c-name').textContent=S.name;
+    initCamVid();
+    if(S.isHost)openHostPeer();
+    renderGrid();renderParticipants();
+    addSys('Class started');
+    if(S.isHost)addSys('Waiting for your student to join…');
+    startTimer();
+    applyRoleControls(S.role);
+    if(S.isHost)scheduleAutoEnd();
+  }catch(err){
+    console.error('startMeeting failed',err);
+    toast('Something went wrong opening the class — returning to your dashboard');
+    setTimeout(()=>{stopAll();route();},800);
+  }
 }
 
 function applyRoleControls(role){
-  // Teacher: only Screen Share + End are available — no mic/cam/hand/bg toggle,
-  // no manual recording control (it is automatic). Mic stays live so the
-  // teacher can still be heard while presenting.
-  // Student: full self controls, no moderation powers, no AI panel.
-  // Admin: full self controls PLUS moderation (mute-all / remove / stop
-  // someone's share) — admins have complete oversight of every class.
+  // Every role gets full self controls (camera, mic, hand, background,
+  // reactions). Students can't screen-share; admins additionally get the
+  // moderator panel (mute-all / remove / stop-share for others).
   const hide=ids=>ids.forEach(id=>{const w=$(id);if(w)w.style.display='none';});
-  if(role==='teacher'){
-    hide(['wrap-mic','wrap-cam','wrap-hand','wrap-bg','wrap-react']);
-    S.camOn=false;if(S.stream)S.stream.getVideoTracks().forEach(t=>t.enabled=false);
-    if(S.stream)S.stream.getAudioTracks().forEach(t=>t.enabled=true);
-    selfSyncUI();
-  }else if(role==='student'){
+  if(role==='student'){
     hide(['wrap-share']);
     const aiTab=$('tab-ai'),aiBtn=$('ai-hdr-btn');
     if(aiTab)aiTab.classList.add('hide');if(aiBtn)aiBtn.style.display='none';
   }
-  // role==='admin': nothing hidden — full controls.
   const modHdr=$('mod-panel-hdr');
   if(modHdr){if(role==='admin')modHdr.classList.remove('hide');else modHdr.classList.add('hide');}
   refreshControlIcons();
