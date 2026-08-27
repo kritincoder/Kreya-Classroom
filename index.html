@@ -456,7 +456,7 @@ label{display:block;font-size:11.5px;font-weight:600;color:var(--text2);margin-b
             <div style="margin-bottom:10px;"><label>Full name</label><input class="input" id="s-name" placeholder="e.g. Rohan Verma"></div>
             <div style="margin-bottom:10px;"><label>Email</label><input class="input" id="s-email" placeholder="student@example.com"></div>
             <div style="margin-bottom:10px;"><label>Password</label><input class="input" type="password" id="s-pass" placeholder="Set a login password"></div>
-            <div style="margin-bottom:14px;"><label>Assign teacher</label><select class="input" id="s-teacher"></select></div>
+            <div style="margin-bottom:14px;"><label>Assign teacher</label><select class="input" id="s-assign-teacher"></select></div>
             <button class="btn btn-primary" style="width:100%;justify-content:center;" onclick="addStudent()">Add student</button>
           </div>
           <div class="card"><h3 style="font-size:13.5px;margin-bottom:12px;font-weight:700;">All students</h3><div id="student-list"></div></div>
@@ -1065,7 +1065,7 @@ function renderAdmin(){
   });
 }
 function renderTeacherSelect(){
-  const sel=$('s-teacher');if(!sel)return;
+  const sel=$('s-assign-teacher');if(!sel)return;
   const teachers=DB.users.filter(u=>u.role==='teacher');
   sel.innerHTML='<option value="">— No teacher yet —</option>'+teachers.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('');
 }
@@ -1079,7 +1079,7 @@ function addTeacher(){
   toast('Teacher account created');
 }
 function addStudent(){
-  const name=($('s-name').value||'').trim(),email=($('s-email').value||'').trim().toLowerCase(),pass=$('s-pass').value||'',teacherId=$('s-teacher').value||'';
+  const name=($('s-name').value||'').trim(),email=($('s-email').value||'').trim().toLowerCase(),pass=$('s-pass').value||'',teacherId=$('s-assign-teacher').value||'';
   if(!name||!email||!pass){toast('Fill in all fields');return;}
   if(DB.users.some(u=>u.email.toLowerCase()===email)){toast('That email is already in use');return;}
   dbPutUser({id:uid(),role:'student',name,email,password:pass,assignedTeacherId:teacherId||null});
