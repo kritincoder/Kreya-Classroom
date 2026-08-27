@@ -398,6 +398,7 @@ label{display:block;font-size:11.5px;font-weight:600;color:var(--text2);margin-b
       <div style="margin-bottom:16px;"><label>Password</label><input class="input" type="password" id="auth-pass" placeholder="••••••••" autocomplete="off"></div>
       <button class="btn btn-primary btn-lg" style="width:100%;justify-content:center;" onclick="doLogin()">Sign in</button>
       <div class="hint-box">Admin login: <strong>admin@kreya.com</strong> / <strong>kreya2026!</strong><br>Sign in as admin to create teacher &amp; student accounts.</div>
+      <div style="text-align:center;margin-top:14px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text3);letter-spacing:0.3px;">BUILD v7 — 2026-08-27</div>
       <div class="sync-banner" id="sync-banner-auth" style="margin-top:10px;">Running in local-only mode — accounts won't sync across devices until Firebase is configured. See the comment at the top of this file's script.</div>
     </div>
   </div>
@@ -538,10 +539,11 @@ label{display:block;font-size:11.5px;font-weight:600;color:var(--text2);margin-b
 <div class="screen" id="s-lobby">
   <nav><div class="logo"><div class="logo-mark">K</div><span class="logo-text">KreyaConnect</span></div><button class="btn btn-ghost btn-sm" onclick="leaveLobby()">Cancel</button></nav>
   <div class="lobby-wrap">
-    <div class="l-spinner"></div>
-    <div style="font-family:'Manrope',sans-serif;font-size:19px;font-weight:800;">Waiting to be admitted…</div>
-    <div style="font-size:13px;color:var(--text2);line-height:1.7;max-width:340px;">Your teacher will let you in shortly.</div>
+    <div class="l-spinner" id="lobby-spinner"></div>
+    <div style="font-family:'Manrope',sans-serif;font-size:19px;font-weight:800;" id="lobby-title">Connecting…</div>
+    <div style="font-size:13px;color:var(--text2);line-height:1.7;max-width:340px;" id="lobby-sub">Setting things up.</div>
     <div id="lobby-av" style="width:56px;height:56px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:21px;font-weight:700;color:#fff;font-family:'Manrope',sans-serif;">Y</div>
+    <button class="btn btn-primary" id="lobby-retry-btn" style="display:none;" onclick="retryJoin()">Retry</button>
   </div>
 </div>
 
@@ -582,6 +584,7 @@ label{display:block;font-size:11.5px;font-weight:600;color:var(--text2);margin-b
         <div class="m-timer" id="m-timer">00:00</div>
         <div class="m-live"><span class="rdot"></span>Live</div>
         <div class="m-rec-ind" id="m-rec-ind"><span class="rdot"></span>REC</div>
+        <div id="conn-status-pill" style="display:none;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:4px 9px;border-radius:5px;background:#1C2026;"></div>
       </div>
       <div class="hdr-r">
         <button class="hdr-icon-btn" onclick="tp('participants')" title="Participants" id="hdr-people-btn"></button>
@@ -1346,6 +1349,22 @@ function closeRecPlayer(){
 const MY_ID='u-'+Math.random().toString(36).substr(2,9);
 const COLORS=['#2954E0','#DB4C77','#16A34A','#B45309','#0891B2','#C2410C','#7C3AED','#DC2626'];
 
+// STUN alone only works when at least one side has a fairly open network.
+// Roughly 1 in 5 real-world connections (school/office wifi, some carrier
+// networks — exactly where a teacher or admin often is) need an actual TURN
+// relay or they hang forever with no error. OpenRelay is a free, public
+// TURN service; it's a shared community resource (not guaranteed 99.99%
+// uptime the way a paid TURN provider is), but it turns a silent, permanent
+// freeze into "usually works" for those networks, which no code fix alone
+// can achieve without a TURN relay in the config at all.
+const ICE_SERVERS={iceServers:[
+  {urls:'stun:stun.l.google.com:19302'},
+  {urls:'stun:stun1.l.google.com:19302'},
+  {urls:'turn:openrelay.metered.ca:80',username:'openrelayproject',credential:'openrelayproject'},
+  {urls:'turn:openrelay.metered.ca:443',username:'openrelayproject',credential:'openrelayproject'},
+  {urls:'turn:openrelay.metered.ca:443?transport=tcp',username:'openrelayproject',credential:'openrelayproject'}
+]};
+
 const S={
   name:'You',role:'student',currentClass:null,meetingId:'',isHost:false,
   muted:false,camOn:true,sharing:false,handRaised:false,
@@ -1472,20 +1491,62 @@ function leaveLobby(){
 function hostPeerId(){return'kreya-'+S.meetingId.replace(/[^a-z0-9]/gi,'x')+'-h';}
 function myPeerId(){return'kuser-'+MY_ID;}
 
-function openHostPeer(){
-  if(typeof Peer==='undefined'){toast('PeerJS not loaded — signaling unavailable');return;}
-  S.peer=new Peer(hostPeerId(),{debug:0});
-  S.peer.on('open',()=>{toast('Class room ready.');});
-  S.peer.on('error',()=>{
-    S.peer=new Peer(myPeerId()+'h',{debug:0});
-    S.peer.on('open',()=>setupHostListeners());
-    S.peer.on('error',()=>{});
-  });
-  setupHostListeners();
+function setConnStatus(state,text,showRetry){
+  const lt=$('lobby-title'),ls=$('lobby-sub'),lsp=$('lobby-spinner'),lrb=$('lobby-retry-btn');
+  if(lt){
+    lt.textContent=state==='error'?'Connection problem':state==='ready'?'Connected':'Connecting…';
+    if(ls)ls.textContent=text||'';
+    if(lsp)lsp.style.display=state==='connecting'?'block':'none';
+    if(lrb)lrb.style.display=showRetry?'inline-flex':'none';
+  }
+  const pill=$('conn-status-pill');
+  if(pill){
+    if(state==='ready'){pill.style.display='none';}
+    else{
+      pill.style.display='flex';
+      pill.textContent=(state==='error'?'⚠ ':'● ')+(text||(state==='error'?'Connection problem':'Connecting…'));
+      pill.style.color=state==='error'?'#FF8A80':'#E0A030';
+      pill.style.cursor=state==='error'?'pointer':'default';
+      pill.onclick=state==='error'?retryJoin:null;
+    }
+  }
 }
-function setupHostListeners(){
-  if(!S.peer)return;
-  S.peer.on('connection',conn=>{
+function retryJoin(){
+  const rb=$('lobby-retry-btn');if(rb)rb.style.display='none';
+  if(S.isHost)openHostPeer();else connectAsGuest();
+}
+function openHostPeer(attempt){
+  attempt=attempt||1;
+  if(typeof Peer==='undefined'){setConnStatus('error','Video calling library failed to load. Check your connection and reload.',true);return;}
+  setConnStatus('connecting',attempt===1?'Setting up the class room…':`Setting up the class room… (retry ${attempt-1})`);
+  let settled=false;
+  const p=new Peer(hostPeerId(),{debug:0,config:ICE_SERVERS});
+  S.peer=p;
+  const giveUp=setTimeout(()=>{
+    if(settled)return;settled=true;
+    try{p.destroy();}catch(e){}
+    if(attempt<4)setTimeout(()=>openHostPeer(attempt+1),1500);
+    else setConnStatus('error','Could not reach the video calling server. Check your internet connection.',true);
+  },9000);
+  p.on('open',()=>{
+    if(settled)return;settled=true;clearTimeout(giveUp);
+    setConnStatus('ready','Room ready');
+  });
+  p.on('error',err=>{
+    if(settled)return;settled=true;clearTimeout(giveUp);
+    console.warn('Host peer error',err);
+    try{p.destroy();}catch(e){}
+    // IMPORTANT: retry the SAME id rather than switching to a different one.
+    // Guests and admins always look for hostPeerId() specifically — a
+    // fallback id they never look for would make the room permanently
+    // unjoinable even though the teacher's own screen looks fine.
+    if(attempt<4)setTimeout(()=>openHostPeer(attempt+1),1800);
+    else setConnStatus('error','Could not start the class room ('+err.type+'). Tap Retry.',true);
+  });
+  setupHostListeners(p);
+}
+function setupHostListeners(p){
+  p.on('connection',conn=>{
     conn.on('open',()=>{
       conn.on('data',data=>{handleGuestMsg(conn,data);});
       conn.on('close',()=>{
@@ -1499,7 +1560,7 @@ function setupHostListeners(){
       });
     });
   });
-  S.peer.on('call',call=>{
+  p.on('call',call=>{
     call.answer(S.stream||new MediaStream());
     call.on('stream',remoteStream=>{
       const uidv=call.peer.startsWith('kuser-')?call.peer.slice(6):call.peer;
@@ -1563,16 +1624,30 @@ function handleGuestMsg(conn,msg){
 function broadcastToGuests(msg,skipId){Object.entries(S.guestConns).forEach(([uidv,conn])=>{if(uidv!==skipId&&conn.open)conn.send(msg);});}
 function sendToGuest(userId,msg){const conn=S.guestConns[userId];if(conn&&conn.open)conn.send(msg);}
 
-function connectAsGuest(){
-  if(typeof Peer==='undefined'){toast('PeerJS not loaded. Try refreshing.');return;}
-  const guestPeer=new Peer(myPeerId(),{debug:0});
+function connectAsGuest(attempt){
+  attempt=attempt||1;
+  if(typeof Peer==='undefined'){setConnStatus('error','Video calling library failed to load. Check your connection and reload.',true);return;}
+  setConnStatus('connecting',attempt===1?'Connecting…':`Connecting… (retry ${attempt-1})`);
+  let settled=false;
+  const guestPeer=new Peer(myPeerId(),{debug:0,config:ICE_SERVERS});
   S.peer=guestPeer;
+  const giveUp=setTimeout(()=>{
+    if(settled)return;settled=true;
+    try{guestPeer.destroy();}catch(e){}
+    if(attempt<4)setTimeout(()=>connectAsGuest(attempt+1),1500);
+    else setConnStatus('error','Could not reach the video calling server. Check your internet connection.',true);
+  },9000);
   guestPeer.on('open',()=>{
+    if(settled)return;settled=true;clearTimeout(giveUp);
     const conn=guestPeer.connect(hostPeerId(),{reliable:true,metadata:{userId:MY_ID,name:S.name}});
     S.hostConn=conn;
-    conn.on('open',()=>{toast(S.role==='admin'?'Connected…':'Connected — waiting to be admitted…');conn.send({type:'knock',userId:MY_ID,name:S.name,role:S.role});});
+    conn.on('open',()=>{
+      setConnStatus('ready','Connected');
+      toast(S.role==='admin'?'Connected…':'Connected — waiting to be admitted…');
+      conn.send({type:'knock',userId:MY_ID,name:S.name,role:S.role});
+    });
     conn.on('data',data=>handleHostMsg(data));
-    conn.on('error',err=>toast('Connection error: '+err.message));
+    conn.on('error',err=>{setConnStatus('error','Connection error: '+err.message,true);});
     conn.on('close',()=>{if($('s-meeting').classList.contains('active'))addSys('Disconnected from host');});
   });
   guestPeer.on('call',call=>{
@@ -1587,8 +1662,21 @@ function connectAsGuest(){
     S.mediaCalls[call.peer]=call;
   });
   guestPeer.on('error',err=>{
-    if(err.type==='peer-unavailable')toast('Teacher has not started the class room yet.');
-    else toast('Connection error: '+err.type);
+    if(settled)return;
+    console.warn('guest peer error',err);
+    if(err.type==='peer-unavailable'){
+      // Teacher hasn't opened their room yet — this is normal if the
+      // student/admin joins a few seconds before the teacher does. Keep
+      // retrying quietly rather than dead-ending immediately.
+      settled=true;clearTimeout(giveUp);
+      if(attempt<10){setConnStatus('connecting','Waiting for the teacher to start the class…');setTimeout(()=>connectAsGuest(attempt+1),3000);}
+      else setConnStatus('error','The teacher has not started this class yet. Tap Retry once they have.',true);
+    }else{
+      settled=true;clearTimeout(giveUp);
+      try{guestPeer.destroy();}catch(e){}
+      if(attempt<4)setTimeout(()=>connectAsGuest(attempt+1),1800);
+      else setConnStatus('error','Connection error: '+err.type+'. Tap Retry.',true);
+    }
   });
 }
 function handleHostMsg(msg){
